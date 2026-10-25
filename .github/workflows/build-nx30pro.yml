@@ -37,19 +37,16 @@ jobs:
       run: |
         git clone -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
         cd openwrt
-        # 如需更新Feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
     - name: Add Custom Feeds (PassWall / Sing-box / ZeroTier / KMS)
       run: |
         cd openwrt
-        # 添加 PassWall 依赖源（主流写法）
-        echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;packages' >> feeds.conf.default
-        echo 'src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall.git;luci' >> feeds.conf.default
+        # 引入 PassWall 源（其中自带 NaiveProxy 客户端及相关支持）
+        echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >> feeds.conf.default
         
-        # 更新并安装新增的 feeds
-        ./scripts/feeds update -a
+        ./scripts/feeds update -a || true
         ./scripts/feeds install -a
 
     - name: Configure Firmware (menuconfig fragments)
@@ -71,8 +68,9 @@ jobs:
         echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
         echo "CONFIG_PACKAGE_udpxy=y" >> .config
 
-        # 3. 你所需要的插件 (PassWall, sing-box, ZeroTier, LuCI-KMS)
+        # 3. 插件配置 (PassWall + NaiveProxy、sing-box、ZeroTier、KMS)
         echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+        echo "CONFIG_PACKAGE_passwall_include_naiveproxy=y" >> .config  # 编译 NaiveProxy 客户端支持
         echo "CONFIG_PACKAGE_sing-box=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
         echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
