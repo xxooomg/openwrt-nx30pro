@@ -1,99 +1,109 @@
 name: Build OpenWrt for H3C NX30Pro
-​on:
-repository_dispatch:
-workflow_dispatch:
-inputs:
-ssh:
-description: 'SSH connection to Actions'
-required: false
-default: 'false'
-type: boolean
-​jobs:
-build:
-runs-on: ubuntu-22.04
-​steps:
-- name: Checkout
-uses: actions/checkout@v4
-​- name: Initialization Environment
-env:
-DEBIAN_FRONTEND: noninteractive
-run: |
-sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-sudo apt-get update
-sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential 
-bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib 
-git gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev 
-libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev 
-libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip 
-python3-ply python3-docutils qemu-utils re2c rsync srecord subversion swig texinfo uglifyjs upx-ucl 
-uuid-dev xsltproc zlib1g-dev zstd
-sudo apt-get clean
-​- name: Clone Source Code
-run: |
-git clone -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
-cd openwrt
-./scripts/feeds update -a
-./scripts/feeds install -a
-​- name: Pre-configure IPv6 Anti-Drop & System Files
-run: |
-cd openwrt
-# 创建自定义系统配置目录
-mkdir -p files/etc/uci-defaults
-​# 1. 创建开机自动运行的配置脚本（修改 wan6 防掉线参数）
-cat << 'EOF' > files/etc/uci-defaults/99-custom-wan6
-#!/bin/sh
-# 预设 wan6 不主动释放 IP/租期，防掉线
-uci set network.wan6.norelease='1'
-uci set network.wan6.force_link='1'
-uci set network.wan6.reqprefix='auto'
-uci commit network
-​exit 0
-EOF
-chmod +x files/etc/uci-defaults/99-custom-wan6
-​# 2. 预设定时任务（每 5 分钟检查一次 wan6，如掉线自动重新拉起）
-mkdir -p files/etc/crontabs
-cat << 'EOF' > files/etc/crontabs/root
-*/5 * * * * if ! ip -6 addr show dev wan6 2>/dev/null | grep -q "global"; then /sbin/ifup wan6; fi
-EOF
-​- name: Configure Firmware
-run: |
-cd openwrt
-./scripts/feeds update -a
-./scripts/feeds install -a
-​# 1. 基础平台配置 (MediaTek MT7981 / H3C NX30Pro)
-echo "CONFIG_TARGET_mediatek=y" >> .config
-echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
-echo "CONFIG_TARGET_DEVICES_mediatek_mt7981_device_h3c_magic-nx30-pro=y" >> .config
-​# 2. 核心网络与 IPv6 防掉线/IPTV 支持
-echo "CONFIG_IPV6=y" >> .config
-echo "CONFIG_PACKAGE_ipv6-helper=y" >> .config
-echo "CONFIG_PACKAGE_odhcp6c=y" >> .config
-echo "CONFIG_PACKAGE_odhcpd-ipv6only=y" >> .config
-​# IPTV 组播相关
-echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
-echo "CONFIG_PACKAGE_udpxy=y" >> .config
-​# 3. 保留轻量实用插件 (ZeroTier 组网 + KMS 激活)
-echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
-echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
-echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
-​make defconfig
-​- name: Make Download
-run: |
-cd openwrt
-make download -j8
-find dl -size -1024c -exec rm -f {} +
-​- name: Compile Firmware
-run: |
-cd openwrt
-make -j$(nproc) || make -j1 V=s
-​- name: Organize Files and Upload
-run: |
-mkdir -p artifact
-find openwrt/bin/targets/ -type f ( -name ".bin" -o -name ".tar.gz" -o -name "*.img.gz" ) -exec cp {} artifact/ ;
-echo "=== Output Files ==="
-ls -la artifact/
-​- name: Upload Firmware to Artifacts
-uses: actions/upload-artifact@v4
-with:
-name: OpenWrt-NX30Pro-Firmware
-path: artifact/
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Initialization Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get update
+        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev \
+          libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip \
+          python3-ply python3-docutils qemu-utils re2c rsync srecord subversion swig texinfo uglifyjs upx-ucl \
+          uuid-dev xsltproc zlib1g-dev zstd
+        sudo apt-get clean
+
+    - name: Clone Source Code
+      run: |
+        git clone -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Pre-configure IPv6 Anti-Drop & System Files
+      run: |
+        cd openwrt
+        mkdir -p files/etc/uci-defaults
+
+        cat << 'EOF' > files/etc/uci-defaults/99-custom-wan6
+        #!/bin/sh
+        uci set network.wan6.norelease='1'
+        uci set network.wan6.force_link='1'
+        uci set network.wan6.reqprefix='auto'
+        uci commit network
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-custom-wan6
+
+        mkdir -p files/etc/crontabs
+        cat << 'EOF' > files/etc/crontabs/root
+        */5 * * * * if ! ip -6 addr show dev wan6 2>/dev/null | grep -q "global"; then /sbin/ifup wan6; fi
+        EOF
+
+    - name: Configure Firmware
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+        echo "CONFIG_TARGET_mediatek=y" >> .config
+        echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
+        echo "CONFIG_TARGET_DEVICES_mediatek_mt7981_device_h3c_magic-nx30-pro=y" >> .config
+
+        echo "CONFIG_IPV6=y" >> .config
+        echo "CONFIG_PACKAGE_ipv6-helper=y" >> .config
+        echo "CONFIG_PACKAGE_odhcp6c=y" >> .config
+        echo "CONFIG_PACKAGE_odhcpd-ipv6only=y" >> .config
+        
+        echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
+        echo "CONFIG_PACKAGE_udpxy=y" >> .config
+
+        echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
+        echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
+
+        make defconfig
+
+    - name: Make Download
+      run: |
+        cd openwrt
+        make download -j8
+        find dl -size -1024c -exec rm -f {} +
+
+    - name: Compile Firmware
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Organize Files and Upload
+      run: |
+        cd openwrt
+        mkdir -p ../artifact
+        find bin/targets/ -type f \( -name "*.bin" -o -name "*.tar.gz" -o -name "*.img.gz" \) -exec cp {} ../artifact/ \;
+        ls -la ../artifact/
+
+    - name: Upload Firmware to Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenWrt-NX30Pro-Firmware
+        path: artifact/
