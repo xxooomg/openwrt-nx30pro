@@ -10,7 +10,6 @@ on:
         default: 'false'
         type: boolean
 
-# 设置并发限制，避免重复触发
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -30,13 +29,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo docker image prune --all --force
         sudo -E apt-get -y update
-        sudo -E apt-get -y install $(cat << 'EOF'
-        build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-        gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig \
-        unzip zlib1g-dev file wget curl util-linux gperf autopoint libelf-dev \
-        libfuse-dev libtool automake autopoint autoconf subversion upx-ucl upx
-        EOF
-        )
+        sudo -E apt-get -y install build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig unzip zlib1g-dev file wget curl util-linux gperf autopoint libelf-dev libfuse-dev libtool automake autoconf subversion upx-ucl upx
         sudo -E apt-get -y autoremove --purge
         sudo -E apt-get clean
         df -h
@@ -44,8 +37,6 @@ jobs:
     - name: Clone Source Code
       run: |
         git clone https://github.com/immortalwrt/immortalwrt.git openwrt
-        cd openwrt
-        # 如果需要特定分支，可以切换，例如: git checkout openwrt-23.05
 
     - name: Update Feeds
       run: |
@@ -53,45 +44,43 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Customize Configuration (Custom .config)
+    - name: Customize Configuration
       run: |
         cd openwrt
         
-        # 1. 基础配置：以 H3C NX30Pro (MT7981) 为例
-        # 注：H3C NX30Pro 使用 MediaTek MT7981 架构
+        # H3C NX30Pro (MT7981 Filogic) 基础配置及所需功能组件
         cat << 'EOF' > .config
-        CONFIG_target_mediatek=y
-        CONFIG_target_mediatek_filogic=y
-        CONFIG_target_mediatek_filogic_DEVICE_h3c_nx30pro=y
+        CONFIG_TARGET_mediatek=y
+        CONFIG_TARGET_mediatek_filogic=y
+        CONFIG_TARGET_mediatek_filogic_DEVICE_h3c_nx30pro=y
         
-        # 2. IPv6 支持
+        # IPv6 支持
         CONFIG_IPV6=y
         CONFIG_PACKAGE_ipv6helper=y
         CONFIG_PACKAGE_odhcp6c=y
         CONFIG_PACKAGE_odhcpd-ipv6only=y
         
-        # 3. IPTV & udpxy 支持
+        # IPTV & udpxy 支持
         CONFIG_PACKAGE_kmod-ipt-core=y
         CONFIG_PACKAGE_kmod-nf-ipt=y
         CONFIG_PACKAGE_udpxy=y
+        CONFIG_PACKAGE_luci-app-udpxy=y
         
-        # 4. KMS 服务器支持
-        CONFIG_PACKAGE_luci-app-vlmcsd=y
+        # KMS 服务器
         CONFIG_PACKAGE_vlmcsd=y
+        CONFIG_PACKAGE_luci-app-vlmcsd=y
         
-        # 5. ZeroTier 支持
+        # ZeroTier 支持
         CONFIG_PACKAGE_zerotier=y
         CONFIG_PACKAGE_luci-app-zerotier=y
         
-        # 6. 常用系统与 LuCI 组件
+        # 系统与常用 LuCI 界面
         CONFIG_PACKAGE_luci=y
         CONFIG_PACKAGE_luci-base=y
         CONFIG_PACKAGE_luci-compat=y
-        CONFIG_PACKAGE_luci-lib-ipkg=y
-        CONFIG_PACKAGE_default-settings-chn=y
+        CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
         EOF
 
-        # 运行 defconfig 生成完整的配置文件
         make defconfig
 
     - name: Download Package
@@ -109,10 +98,10 @@ jobs:
 
     - name: Organize Files
       id: organize
-      if: (!cancelled())
+      if: success()
       run: |
         cd openwrt/bin/targets/*/*
-        rm -packages.tar.gz || true
+        rm -rf packages || true
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -120,5 +109,5 @@ jobs:
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: ImmortalWrt-NX30Pro-${{ env.DEVICE_NAME }}
-        path: ${{ env.env.FIRMWARE || 'openwrt/bin/targets/*/*' }}
+        name: ImmortalWrt-NX30Pro
+        path: ${{ env.FIRMWARE }}
