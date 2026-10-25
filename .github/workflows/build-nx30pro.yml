@@ -1,0 +1,106 @@
+name: Build OpenWrt for H3C NX30Pro
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Initialization Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo apt-get update
+        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev \
+          libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip \
+          python3-ply python3-docutils qemu-utils re2c rsync srecord subversion swig texinfo uglifyjs upx-ucl \
+          uuid-dev xsltproc zlib1g-dev zstd
+        sudo apt-get clean
+
+    - name: Clone Source Code
+      run: |
+        git clone -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
+        cd openwrt
+        # 如需更新Feeds
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Add Custom Feeds (PassWall / Sing-box / ZeroTier / KMS)
+      run: |
+        cd openwrt
+        # 添加 PassWall 依赖源（主流写法）
+        echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;packages' >> feeds.conf.default
+        echo 'src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall.git;luci' >> feeds.conf.default
+        
+        # 更新并安装新增的 feeds
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Configure Firmware (menuconfig fragments)
+      run: |
+        cd openwrt
+        
+        # 1. 基础平台配置 (MediaTek MT7981 / H3C NX30Pro)
+        echo "CONFIG_TARGET_mediatek=y" >> .config
+        echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
+        echo "CONFIG_TARGET_DEVICES_mediatek_mt7981_device_h3c_magic-nx30-pro=y" >> .config
+
+        # 2. 核心网络与 IPv6 / IPTV 支持
+        echo "CONFIG_IPV6=y" >> .config
+        echo "CONFIG_PACKAGE_ipv6-helper=y" >> .config
+        echo "CONFIG_PACKAGE_odhcp6c=y" >> .config
+        echo "CONFIG_PACKAGE_odhcpd-ipv6only=y" >> .config
+        
+        # IPTV 组播相关 (igmpproxy, udpxy)
+        echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
+        echo "CONFIG_PACKAGE_udpxy=y" >> .config
+
+        # 3. 你所需要的插件 (PassWall, sing-box, ZeroTier, LuCI-KMS)
+        echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+        echo "CONFIG_PACKAGE_sing-box=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
+        echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
+
+        # 4. 生成完整配置文件
+        make defconfig
+
+    - name: Make Download
+      run: |
+        cd openwrt
+        make download -j8
+        find dl -size -1024c -exec rm -f {} +
+
+    - name: Compile Firmware
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
+
+    - name: Organize Files and Upload
+      run: |
+        cd openwrt
+        mkdir -p ../artifact
+        find bin/targets/ -name "*sysupgrade.bin*" | xargs -i cp {} ../artifact/
+        find bin/targets/ -name "*factory.bin*" | xargs -i cp {} ../artifact/
+
+    - name: Upload Firmware to Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: OpenWrt-NX30Pro-Firmware
+        path: artifact/
