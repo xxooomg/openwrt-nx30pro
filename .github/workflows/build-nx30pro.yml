@@ -40,19 +40,21 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Add Custom Feeds (PassWall / Sing-box / ZeroTier / KMS)
+    - name: Add Custom Packages (PassWall & NaiveProxy)
+      run: |
+        cd openwrt/package
+        # 直接克隆 passwall 及其依赖包到 package 目录（规避 feeds 失败）
+        git clone --depth 1 https://github.com/fw876/helloworld.git passwall_packages
+        # 下载 naiveproxy 源码/二进制包支持
+        git clone --depth 1 https://github.com/klzgrad/naiveproxy.git naiveproxy || true
+
+    - name: Configure Firmware
       run: |
         cd openwrt
-        # 引入 PassWall 源（其中自带 NaiveProxy 客户端及相关支持）
-        echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall.git' >> feeds.conf.default
-        
-        ./scripts/feeds update -a || true
+        # 重新更新/安装 feeds
+        ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Configure Firmware (menuconfig fragments)
-      run: |
-        cd openwrt
-        
         # 1. 基础平台配置 (MediaTek MT7981 / H3C NX30Pro)
         echo "CONFIG_TARGET_mediatek=y" >> .config
         echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
@@ -68,10 +70,12 @@ jobs:
         echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
         echo "CONFIG_PACKAGE_udpxy=y" >> .config
 
-        # 3. 插件配置 (PassWall + NaiveProxy、sing-box、ZeroTier、KMS)
+        # 3. 核心插件 (PassWall + NaiveProxy、sing-box、ZeroTier、KMS)
         echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-        echo "CONFIG_PACKAGE_passwall_include_naiveproxy=y" >> .config  # 编译 NaiveProxy 客户端支持
+        echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y" >> .config
         echo "CONFIG_PACKAGE_sing-box=y" >> .config
+        echo "CONFIG_PACKAGE_naiveproxy=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
         echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
