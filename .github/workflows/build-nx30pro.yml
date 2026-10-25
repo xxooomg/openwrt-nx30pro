@@ -40,13 +40,6 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Add Custom Packages (PassWall & NaiveProxy)
-      run: |
-        cd openwrt/package
-        # 克隆 PassWall 及其组件
-        git clone --depth 1 https://github.com/fw876/helloworld.git passwall_packages
-        git clone --depth 1 https://github.com/klzgrad/naiveproxy.git naiveproxy || true
-
     - name: Pre-configure IPv6 Anti-Drop & System Files
       run: |
         cd openwrt
@@ -93,12 +86,7 @@ jobs:
         echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
         echo "CONFIG_PACKAGE_udpxy=y" >> .config
 
-        # 3. 插件 (PassWall + NaiveProxy + sing-box + ZeroTier + KMS)
-        echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y" >> .config
-        echo "CONFIG_PACKAGE_sing-box=y" >> .config
-        echo "CONFIG_PACKAGE_naiveproxy=y" >> .config
+        # 3. 保留轻量实用插件 (ZeroTier 组网 + KMS 激活)
         echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
         echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
