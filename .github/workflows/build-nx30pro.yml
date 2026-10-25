@@ -43,15 +43,38 @@ jobs:
     - name: Add Custom Packages (PassWall & NaiveProxy)
       run: |
         cd openwrt/package
-        # 直接克隆 passwall 及其依赖包到 package 目录（规避 feeds 失败）
+        # 克隆 PassWall 及其组件
         git clone --depth 1 https://github.com/fw876/helloworld.git passwall_packages
-        # 下载 naiveproxy 源码/二进制包支持
         git clone --depth 1 https://github.com/klzgrad/naiveproxy.git naiveproxy || true
+
+    - name: Pre-configure IPv6 Anti-Drop & System Files
+      run: |
+        cd openwrt
+        # 创建自定义系统配置目录
+        mkdir -p files/etc/uci-defaults
+
+        # 1. 创建开机自动运行的配置脚本（修改 wan6 防掉线参数）
+        cat << 'EOF' > files/etc/uci-defaults/99-custom-wan6
+        #!/bin/sh
+        # 预设 wan6 不主动释放 IP/租期，防掉线
+        uci set network.wan6.norelease='1'
+        uci set network.wan6.force_link='1'
+        uci set network.wan6.reqprefix='auto'
+        uci commit network
+
+        exit 0
+        EOF
+        chmod +x files/etc/uci-defaults/99-custom-wan6
+
+        # 2. 预设定时任务（每 5 分钟检查一次 wan6，如掉线自动重新拉起）
+        mkdir -p files/etc/crontabs
+        cat << 'EOF' > files/etc/crontabs/root
+        */5 * * * * if ! ip -6 addr show dev wan6 2>/dev/null | grep -q "global"; then /sbin/ifup wan6; fi
+        EOF
 
     - name: Configure Firmware
       run: |
         cd openwrt
-        # 重新更新/安装 feeds
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
@@ -60,17 +83,17 @@ jobs:
         echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
         echo "CONFIG_TARGET_DEVICES_mediatek_mt7981_device_h3c_magic-nx30-pro=y" >> .config
 
-        # 2. 核心网络与 IPv6 / IPTV 支持
+        # 2. 核心网络与 IPv6 防掉线/IPTV 支持
         echo "CONFIG_IPV6=y" >> .config
         echo "CONFIG_PACKAGE_ipv6-helper=y" >> .config
         echo "CONFIG_PACKAGE_odhcp6c=y" >> .config
         echo "CONFIG_PACKAGE_odhcpd-ipv6only=y" >> .config
         
-        # IPTV 组播相关 (igmpproxy, udpxy)
+        # IPTV 组播相关
         echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
         echo "CONFIG_PACKAGE_udpxy=y" >> .config
 
-        # 3. 核心插件 (PassWall + NaiveProxy、sing-box、ZeroTier、KMS)
+        # 3. 插件 (PassWall + NaiveProxy + sing-box + ZeroTier + KMS)
         echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_NaiveProxy=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y" >> .config
@@ -80,7 +103,6 @@ jobs:
         echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
         echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
 
-        # 4. 生成完整配置文件
         make defconfig
 
     - name: Make Download
