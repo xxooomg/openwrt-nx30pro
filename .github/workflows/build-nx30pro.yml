@@ -1,4 +1,4 @@
-name: Build OpenWrt for H3C NX30Pro
+name: Build ImmortalWrt for H3C NX30Pro
 
 on:
   repository_dispatch:
@@ -9,6 +9,11 @@ on:
         required: false
         default: 'false'
         type: boolean
+
+# 设置并发限制，避免重复触发
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -23,87 +28,97 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo apt-get update
-        sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
-          git gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
-          libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev \
-          libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip \
-          python3-ply python3-docutils qemu-utils re2c rsync srecord subversion swig texinfo uglifyjs upx-ucl \
-          uuid-dev xsltproc zlib1g-dev zstd
-        sudo apt-get clean
+        sudo docker image prune --all --force
+        sudo -E apt-get -y update
+        sudo -E apt-get -y install $(cat << 'EOF'
+        build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+        gettext git libncurses5-dev libssl-dev python3-setuptools rsync swig \
+        unzip zlib1g-dev file wget curl util-linux gperf autopoint libelf-dev \
+        libfuse-dev libtool automake autopoint autoconf subversion upx-ucl upx
+        EOF
+        )
+        sudo -E apt-get -y autoremove --purge
+        sudo -E apt-get clean
+        df -h
 
     - name: Clone Source Code
       run: |
-        git clone -b openwrt-23.05 https://github.com/immortalwrt/immortalwrt.git openwrt
+        git clone https://github.com/immortalwrt/immortalwrt.git openwrt
         cd openwrt
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+        # 如果需要特定分支，可以切换，例如: git checkout openwrt-23.05
 
-    - name: Pre-configure IPv6 Anti-Drop & System Files
-      run: |
-        cd openwrt
-        mkdir -p files/etc/uci-defaults
-
-        cat << 'EOF' > files/etc/uci-defaults/99-custom-wan6
-        #!/bin/sh
-        uci set network.wan6.norelease='1'
-        uci set network.wan6.force_link='1'
-        uci set network.wan6.reqprefix='auto'
-        uci commit network
-        exit 0
-        EOF
-        chmod +x files/etc/uci-defaults/99-custom-wan6
-
-        mkdir -p files/etc/crontabs
-        cat << 'EOF' > files/etc/crontabs/root
-        */5 * * * * if ! ip -6 addr show dev wan6 2>/dev/null | grep -q "global"; then /sbin/ifup wan6; fi
-        EOF
-
-    - name: Configure Firmware
+    - name: Update Feeds
       run: |
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-        echo "CONFIG_TARGET_mediatek=y" >> .config
-        echo "CONFIG_TARGET_mediatek_mt7981=y" >> .config
-        echo "CONFIG_TARGET_DEVICES_mediatek_mt7981_device_h3c_magic-nx30-pro=y" >> .config
-
-        echo "CONFIG_IPV6=y" >> .config
-        echo "CONFIG_PACKAGE_ipv6-helper=y" >> .config
-        echo "CONFIG_PACKAGE_odhcp6c=y" >> .config
-        echo "CONFIG_PACKAGE_odhcpd-ipv6only=y" >> .config
+    - name: Customize Configuration (Custom .config)
+      run: |
+        cd openwrt
         
-        echo "CONFIG_PACKAGE_igmpproxy=y" >> .config
-        echo "CONFIG_PACKAGE_udpxy=y" >> .config
+        # 1. 基础配置：以 H3C NX30Pro (MT7981) 为例
+        # 注：H3C NX30Pro 使用 MediaTek MT7981 架构
+        cat << 'EOF' > .config
+        CONFIG_target_mediatek=y
+        CONFIG_target_mediatek_filogic=y
+        CONFIG_target_mediatek_filogic_DEVICE_h3c_nx30pro=y
+        
+        # 2. IPv6 支持
+        CONFIG_IPV6=y
+        CONFIG_PACKAGE_ipv6helper=y
+        CONFIG_PACKAGE_odhcp6c=y
+        CONFIG_PACKAGE_odhcpd-ipv6only=y
+        
+        # 3. IPTV & udpxy 支持
+        CONFIG_PACKAGE_kmod-ipt-core=y
+        CONFIG_PACKAGE_kmod-nf-ipt=y
+        CONFIG_PACKAGE_udpxy=y
+        
+        # 4. KMS 服务器支持
+        CONFIG_PACKAGE_luci-app-vlmcsd=y
+        CONFIG_PACKAGE_vlmcsd=y
+        
+        # 5. ZeroTier 支持
+        CONFIG_PACKAGE_zerotier=y
+        CONFIG_PACKAGE_luci-app-zerotier=y
+        
+        # 6. 常用系统与 LuCI 组件
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-base=y
+        CONFIG_PACKAGE_luci-compat=y
+        CONFIG_PACKAGE_luci-lib-ipkg=y
+        CONFIG_PACKAGE_default-settings-chn=y
+        EOF
 
-        echo "CONFIG_PACKAGE_luci-app-zerotier=y" >> .config
-        echo "CONFIG_PACKAGE_vlmcsd=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-vlmcsd=y" >> .config
-
+        # 运行 defconfig 生成完整的配置文件
         make defconfig
 
-    - name: Make Download
+    - name: Download Package
       run: |
         cd openwrt
         make download -j8
-        find dl -size -1024c -exec rm -f {} +
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile Firmware
       run: |
         cd openwrt
+        echo -e "$(nproc) thread build."
         make -j$(nproc) || make -j1 V=s
 
-    - name: Organize Files and Upload
+    - name: Organize Files
+      id: organize
+      if: (!cancelled())
       run: |
-        cd openwrt
-        mkdir -p ../artifact
-        find bin/targets/ -type f \( -name "*.bin" -o -name "*.tar.gz" -o -name "*.img.gz" \) -exec cp {} ../artifact/ \;
-        ls -la ../artifact/
+        cd openwrt/bin/targets/*/*
+        rm -packages.tar.gz || true
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload Firmware to Artifacts
       uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt-NX30Pro-Firmware
-        path: artifact/
+        name: ImmortalWrt-NX30Pro-${{ env.DEVICE_NAME }}
+        path: ${{ env.env.FIRMWARE || 'openwrt/bin/targets/*/*' }}
